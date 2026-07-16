@@ -12,15 +12,20 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "pension720"
-SCAN_INTERVAL = timedelta(hours=6)  # 6시간 간격으로 주기적인 자동 업데이트 실행
+SCAN_INTERVAL = timedelta(hours=6)
+
+# 동행복권 차단을 우회하기 위한 브라우저 헤더 설정
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Referer": "https://m.dhlottery.co.kr/"
+}
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    """__init__.py에 의해 호출되며, 실제로 센서 기기들을 생성해 홈어시스턴트에 등록합니다."""
+    """Config Entry(UI)를 통해 센서를 등록합니다."""
     session = async_get_clientsession(hass)
     
-    # 4가지 센서 종류를 정의하고 리스트로 묶어 등록합니다.
     sensors = [
         PensionSensor(session, "round", "연금복권 회차", "mdi:numeric"),
         PensionSensor(session, "group", "연금복권 1등 조", "mdi:ticket-confirmation"),
@@ -32,60 +37,54 @@ async def async_setup_entry(
 
 
 class PensionSensor(SensorEntity):
-    """개별 연금복권 센서의 동작을 정의하는 클래스"""
+    """연금복권 데이터 센서 클래스"""
 
     def __init__(self, session, sensor_type, name, icon):
         self._session = session
         self._type = sensor_type
         self._attr_name = name
         self._attr_icon = icon
-        # 개발자 도구에서 고유값으로 제어할 수 있도록 고유 ID를 부여합니다.
         self._attr_unique_id = f"pension720_{sensor_type}"
         self._state = None
         self._available = False
 
     @property
     def state(self):
-        """센서의 현재 상태 값"""
         return self._state
 
     @property
     def available(self):
-        """서버가 터졌거나 데이터를 못 가져올 때 센서를 '사용 불가' 상태로 처리합니다."""
         return self._available
 
     async def async_update(self):
-        """동행복권 모바일 페이지를 주기적으로 긁어오는 핵심 크롤링 로직"""
+        """동행복권 모바일 웹페이지 파싱"""
         url = "https://m.dhlottery.co.kr/gameResult.do?method=pension720Result"
         try:
-            # 10초 타임아웃 제한을 두어 웹 응답 지연으로 인한 HA 먹통 방지
-            with async_timeout.timeout(10):
-                response = await self._session.get(url)
+            with async_timeout.timeout(15):
+                # HEADERS를 함께 전송하여 일반 브라우저의 요청인 것처럼 속입니다.
+                response = await self._session.get(url, headers=HEADERS)
+                
                 if response.status != 200:
-                    _LOGGER.error("동행복권 서버 응답 에러: %s", response.status)
+                    _LOGGER.error("동행복권 서버 응답 에러 (코드: %s)", response.status)
                     self._available = False
                     return
                 
                 html = await response.text()
                 soup = BeautifulSoup(html, "html.parser")
 
-                # 각 센서 타입에 맞춰 HTML 요소를 추출합니다.
                 if self._type == "round":
-                    # 예: "123회" -> "123"
                     round_element = soup.select_one(".num_key strong")
                     if round_element:
                         self._state = round_element.text.replace("회", "").strip()
                         self._available = True
 
                 elif self._type == "group":
-                    # 예: "1조" -> "1"
                     group_element = soup.select_one(".win720_num .band_group span")
                     if group_element:
                         self._state = group_element.text.replace("조", "").strip()
                         self._available = True
 
                 elif self._type == "number":
-                    # 1등 당첨번호 6자리를 한 문자열로 병합합니다 (예: "123456")
                     num_element = soup.select_one(".win720_num .band_num")
                     if num_element:
                         numbers = num_element.text.split()
@@ -93,7 +92,6 @@ class PensionSensor(SensorEntity):
                         self._available = True
 
                 elif self._type == "bonus":
-                    # 보너스 번호 6자리를 한 문자열로 병합합니다
                     bonus_element = soup.select_one(".bonus_num .band_num")
                     if bonus_element:
                         numbers = bonus_element.text.split()
