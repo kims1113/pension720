@@ -1,9 +1,0 @@
-{
-  "domain": "pension720",
-  "name": "연금복권720+",
-  "codeowners": ["@grok"],
-  "version": "1.0.0",
-  "iot_class": "cloud_polling",
-  "documentation": "https://github.com/kims1113/pension720",
-  "requirements": ["requests"]
-}
